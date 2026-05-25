@@ -37,19 +37,17 @@ Rules:
 - If user writes in another language, respond in that language but extract values in English schema.
 - When all fields are collected, output collected data as JSON inside <event_data></event_data> tags.
 - After EVERY response, output 2-4 relevant suggestion chips  based on user responses as JSON array inside <suggestions></suggestions> tags.
-- Never collect data beyond what is listed above.`;
+- Never collect data beyond what is listed above.
 
-// SUGGESTION RULES — these are mandatory:
-// - If collecting event_name: suggestions must be example event names like ["Tech Summit 2026", "Product Launch", "Team Offsite", "Workshop"]
-// - If collecting subheading: suggestions must be ["Add a subheading", "Skip this field"]
-// - If collecting description: suggestions must be ["Describe the event purpose", "Skip for now"]
-// - If collecting timezone: suggestions must ALWAYS be exactly ["UTC", "Asia/Kathmandu", "America/New_York", "Europe/London"]
-// - If collecting status: suggestions must ALWAYS be exactly ["Draft", "Published", "Cancelled"]
-// - If collecting start_date or end_date or vanish_date: suggestions must be ["Tomorrow", "Next week", "Next month", "Enter custom date"]
-// - If collecting roles: suggestions must be ["Organiser", "Speaker", "Attendee", "Volunteer"]
-// - If asking for confirmation: suggestions must be ["Yes, create it", "Edit something"]
-// Output suggestions as a JSON array in <suggestions> tags. Always. Every response.
-
+- If collecting event_name: suggestions must be example event names like ["Tech Summit 2026", "Product Launch", "Team Offsite", "Workshop"]
+- If collecting subheading: suggestions must be ["Add a subheading", "Skip this field"]
+- If collecting description: suggestions must be ["Describe the event purpose", "Skip for now"]
+- If collecting timezone: suggestions must ALWAYS be exactly ["UTC", "Asia/Kathmandu", "America/New_York", "Europe/London"]
+- If collecting status: suggestions must ALWAYS be exactly ["Draft", "Published", "Cancelled"]
+- If collecting start_date or end_date or vanish_date: suggestions must be ["Tomorrow", "Next week", "Next month", "Enter custom date"]
+- If collecting roles: suggestions must be ["Organiser", "Speaker", "Attendee", "Volunteer"]
+- If asking for confirmation: suggestions must be ["Yes, create it", "Edit something"]
+- Output suggestions as a JSON array in <suggestions> tags. Always. Every response.`;
 
 export const sendChatMessage = async (
   userMessage: string,
@@ -57,7 +55,7 @@ export const sendChatMessage = async (
   state: Record<string, any>,
 ): Promise<GeminiResponse> => {
   try {
-    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const collectedFields =
       Object.keys(state)
