@@ -7,7 +7,12 @@ import { createAuditLog } from "../lib/audit";
 import { validateRequest } from "../middleware/validate";
 import { verifyJWT } from "../middleware/auth";
 import { chatLimiter } from "../middleware/rateLimiter";
-import { AuthenticatedRequest, ChatMessage, ChatSession, ChatResponse } from "../types";
+import {
+  AuthenticatedRequest,
+  ChatMessage,
+  ChatSession,
+  ChatResponse,
+} from "../types";
 
 const router = Router();
 
@@ -56,7 +61,7 @@ router.post(
         const result = await query(
           `SELECT * FROM chat_sessions
            WHERE id = $1 AND user_id = $2`,
-          [sessionId, req.userId]
+          [sessionId, req.userId],
         );
 
         if (result.rows.length === 0) {
@@ -70,7 +75,7 @@ router.post(
           `INSERT INTO chat_sessions (user_id, messages, state)
            VALUES ($1, $2, $3)
            RETURNING *`,
-          [req.userId, JSON.stringify([]), JSON.stringify({})]
+          [req.userId, JSON.stringify([]), JSON.stringify({})],
         );
 
         session = rowToChatSession(result.rows[0]);
@@ -84,7 +89,7 @@ router.post(
       const geminiResponse = await sendChatMessage(
         userMessage,
         conversationHistory,
-        session.state
+        session.state,
       );
 
       const updatedMessages: ChatMessage[] = [
@@ -101,9 +106,11 @@ router.post(
         },
       ];
 
-      const updatedState = geminiResponse.eventData
-        ? { ...session.state, ...geminiResponse.eventData }
-        : session.state;
+      const updatedState = {
+        ...session.state,
+        ...(geminiResponse.collectedState || {}),
+        ...(geminiResponse.eventData || {}),
+      };
 
       let eventId: string | undefined;
 
@@ -126,15 +133,15 @@ router.post(
             geminiResponse.eventData.end_date || null,
             geminiResponse.eventData.vanish_date || null,
             JSON.stringify(geminiResponse.eventData.roles || []),
-          ]
+          ],
         );
 
         eventId = eventResult.rows[0].id;
 
-        await query(
-          `UPDATE chat_sessions SET event_id = $1 WHERE id = $2`,
-          [eventId, session.id]
-        );
+        await query(`UPDATE chat_sessions SET event_id = $1 WHERE id = $2`, [
+          eventId,
+          session.id,
+        ]);
 
         await createAuditLog(
           req.userId!,
@@ -142,14 +149,18 @@ router.post(
           "event",
           eventId,
           { source: "chat_session", chat_session_id: session.id },
-          ipAddress
+          ipAddress,
         );
       }
 
       await query(
         `UPDATE chat_sessions SET messages = $1, state = $2, updated_at = NOW()
          WHERE id = $3`,
-        [JSON.stringify(updatedMessages), JSON.stringify(updatedState), session.id]
+        [
+          JSON.stringify(updatedMessages),
+          JSON.stringify(updatedState),
+          session.id,
+        ],
       );
 
       const response: ChatResponse = {
@@ -164,31 +175,36 @@ router.post(
         ...response,
       });
     } catch (err) {
-      console.error('[CHAT ERROR]:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+      console.error("[CHAT ERROR]:", err);
+      res
+        .status(500)
+        .json({
+          error: err instanceof Error ? err.message : "Internal server error",
+        });
     }
-  }
+  },
 );
 
-router.get(
-  "/sessions",
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const result = await query(
-        `SELECT * FROM chat_sessions
+router.get("/sessions", async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await query(
+      `SELECT * FROM chat_sessions
          WHERE user_id = $1
          ORDER BY updated_at DESC`,
-        [req.userId]
-      );
+      [req.userId],
+    );
 
-      const sessions = result.rows.map(rowToChatSession);
-      res.json(sessions);
-    } catch (err) {
-      console.error('[CHAT ERROR]:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
-    }
+    const sessions = result.rows.map(rowToChatSession);
+    res.json(sessions);
+  } catch (err) {
+    console.error("[CHAT ERROR]:", err);
+    res
+      .status(500)
+      .json({
+        error: err instanceof Error ? err.message : "Internal server error",
+      });
   }
-);
+});
 
 router.get(
   "/sessions/:sessionId",
@@ -199,7 +215,7 @@ router.get(
       const result = await query(
         `SELECT * FROM chat_sessions
          WHERE id = $1 AND user_id = $2`,
-        [sessionId, req.userId]
+        [sessionId, req.userId],
       );
 
       if (result.rows.length === 0) {
@@ -210,10 +226,14 @@ router.get(
       const session = rowToChatSession(result.rows[0]);
       res.json(session);
     } catch (err) {
-      console.error('[CHAT ERROR]:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+      console.error("[CHAT ERROR]:", err);
+      res
+        .status(500)
+        .json({
+          error: err instanceof Error ? err.message : "Internal server error",
+        });
     }
-  }
+  },
 );
 
 export default router;

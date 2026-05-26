@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { ChatMessage, GeminiEventData } from "../types";
+
 import dotenv from "dotenv";
+import { ChatMessage, GeminiEventData, GeminiResponse } from "../types";
 
 dotenv.config();
 
@@ -9,12 +10,6 @@ if (!process.env.GEMINI_API_KEY) {
 }
 
 const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-interface GeminiResponse {
-  reply: string;
-  suggestions: string[];
-  eventData?: GeminiEventData;
-}
 
 const SYSTEM_PROMPT = `You are an event creation assistant. Collect event data conversationally — never use form language.
 
@@ -30,24 +25,27 @@ Fields to collect in order:
 9. vanish_date (ISO 8601, must be after end_date)
 10. roles (array of strings)
 
-Rules:
+CRITICAL RULES:
+- Check "Collected so far" FIRST before every response. NEVER ask for a field already listed there.
+- Move to the next uncollected field only.
 - Ask one field at a time. Be warm and brief.
 - Confirm each value back naturally before moving on.
-- If value is invalid, explain why and re-ask.
+- If value is invalid, explain why and re-ask ONLY that field.
 - If user writes in another language, respond in that language but extract values in English schema.
-- When all fields are collected, output collected data as JSON inside <event_data></event_data> tags.
-- After EVERY response, output 2-4 relevant suggestion chips  based on user responses as JSON array inside <suggestions></suggestions> tags.
-- Never collect data beyond what is listed above.
+- When ALL 10 fields are collected, output final data as JSON inside <event_data></event_data> tags.
+- After EVERY response, output 2-4 suggestion chips as JSON inside <suggestions></suggestions> tags.
+- After EVERY response where at least one field is confirmed, output ALL confirmed fields so far as JSON inside <collected_state></collected_state> tags.
+- Never collect data beyond the 10 fields listed.
 
-- If collecting event_name: suggestions must be example event names like ["Tech Summit 2026", "Product Launch", "Team Offsite", "Workshop"]
-- If collecting subheading: suggestions must be ["Add a subheading", "Skip this field"]
-- If collecting description: suggestions must be ["Describe the event purpose", "Skip for now"]
-- If collecting timezone: suggestions must ALWAYS be exactly ["UTC", "Asia/Kathmandu", "America/New_York", "Europe/London"]
-- If collecting status: suggestions must ALWAYS be exactly ["Draft", "Published", "Cancelled"]
-- If collecting start_date or end_date or vanish_date: suggestions must be ["Tomorrow", "Next week", "Next month", "Enter custom date"]
-- If collecting roles: suggestions must be ["Organiser", "Speaker", "Attendee", "Volunteer"]
-- If asking for confirmation: suggestions must be ["Yes, create it", "Edit something"]
-- Output suggestions as a JSON array in <suggestions> tags. Always. Every response.`;
+SUGGESTION RULES:
+- event_name: ["Tech Summit 2026", "Product Launch", "Team Offsite", "Workshop"]
+- subheading: ["Add a subheading", "Skip this field"]
+- description: ["Describe the event purpose", "Skip for now"]
+- timezone: ["UTC", "Asia/Kathmandu", "America/New_York", "Europe/London"]
+- status: ["Draft", "Published", "Cancelled"]
+- start_date/end_date/vanish_date: ["Tomorrow", "Next week", "Next month", "Enter custom date"]
+- roles: ["Organiser", "Speaker", "Attendee", "Volunteer"]
+- confirmation: ["Yes, create it", "Edit something"]`;
 
 export const sendChatMessage = async (
   userMessage: string,
@@ -106,7 +104,7 @@ ${collectedFields}`;
     if (!response) {
       // All retries exhausted for quota errors
       throw new Error(
-        "AI service is temporarily busy. Please wait a moment and try again."
+        "AI service is temporarily busy. Please wait a moment and try again.",
       );
     }
 
@@ -118,6 +116,19 @@ ${collectedFields}`;
     const suggestionsMatch = textContent.match(
       /<suggestions>([\s\S]*?)<\/suggestions>/,
     );
+
+    const collectedStateMatch = textContent.match(
+      /<collected_state>([\s\S]*?)<\/collected_state>/,
+    );
+
+    let collectedState: Record<string, any> | undefined;
+    if (collectedStateMatch) {
+      try {
+        collectedState = JSON.parse(collectedStateMatch[1]);
+      } catch (e) {
+        console.error("Failed to parse collected_state JSON:", e);
+      }
+    }
 
     let eventData: GeminiEventData | undefined;
     let suggestions: string[] = [];
@@ -142,12 +153,14 @@ ${collectedFields}`;
     const reply = textContent
       .replace(/<event_data>[\s\S]*?<\/event_data>/, "")
       .replace(/<suggestions>[\s\S]*?<\/suggestions>/, "")
+      .replace(/<collected_state>[\s\S]*?<\/collected_state>/, "")
       .trim();
 
     return {
       reply,
       suggestions: Array.isArray(suggestions) ? suggestions : [],
       eventData,
+      collectedState,
     };
   } catch (error) {
     console.error("Gemini API error:", error);

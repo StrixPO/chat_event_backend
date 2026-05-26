@@ -89,4 +89,12 @@ export interface ChatResponse {
   suggestions: string[];
   eventCreated: boolean;
   eventId?: string;
+  collectedState?: Record<string, any>;
+}
+
+export interface GeminiResponse {
+  reply: string;
+  suggestions: string[];
+  eventData?: GeminiEventData;
+  collectedState?: Record<string, any>;
 }
