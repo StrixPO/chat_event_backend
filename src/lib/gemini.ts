@@ -52,7 +52,7 @@ export const sendChatMessage = async (
   state: Record<string, any>,
 ): Promise<GeminiResponse> => {
   try {
-    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     // FIX 2: Generate system parameters cleanly without raw JSON text dumps
     const collectedFields =
