@@ -2,8 +2,8 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import validator from "validator";
 import { query } from "../db/client";
-import { sendChatMessage } from "../lib/gemini";
-// import { sendChatMessage } from "../lib/openai";
+// import { sendChatMessage } from "../lib/gemini";
+import { sendChatMessage } from "../lib/openai";
 
 import { createAuditLog } from "../lib/audit";
 import { validateRequest } from "../middleware/validate";

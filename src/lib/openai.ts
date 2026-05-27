@@ -1,11 +1,11 @@
 import OpenAI from "openai";
 import dotenv from "dotenv";
-import { ChatMessage, GeminiEventData, GeminiResponse } from "../types";
+import { ChatMessage } from "../types";
 
 dotenv.config();
 
 if (!process.env.OPENAI_API_KEY) {
-  throw new Error("OPENAI_API_KEY environment variable is not set");
+  throw new Error("OPENAI_API_KEY missing");
 }
 
 const client = new OpenAI({
@@ -13,204 +13,86 @@ const client = new OpenAI({
 });
 
 const SYSTEM_PROMPT = `
-You are an event creation assistant. Collect event data conversationally — never use form language.
+You are an event creation assistant.
 
-Fields to collect in order:
-1. event_name (string, required)
-2. subheading (string, optional — accept "skip")
-3. description (string, required, min 20 chars)
-4. banner_image (tell user to upload, set field to "PENDING_UPLOAD")
-5. timezone (IANA string)
-6. status (DRAFT | PUBLISHED | CANCELLED, default DRAFT)
-7. start_date (ISO 8601)
-8. end_date (ISO 8601, must be after start_date)
-9. vanish_date (ISO 8601, must be after end_date)
-10. roles (array of strings)
+Your job:
+Collect event fields step-by-step.
 
-CRITICAL RULES:
-- Check "Collected so far" FIRST before every response.
-- NEVER ask for a field already listed there.
-- Move only to next uncollected field.
-- Ask one field at a time.
-- Be warm and brief.
-- Confirm values naturally.
-- If invalid, explain and ask only that field again.
-- If user uses another language, reply in that language but convert extracted values into English schema.
-- When all fields collected output final JSON inside:
-<event_data></event_data>
+FIELDS:
+- event_name (required)
+- subheading (optional)
+- description (required, min 20 chars)
+- banner_image (string or "PENDING_UPLOAD")
+- timezone
+- status (DRAFT | PUBLISHED | CANCELLED)
+- start_date (ISO 8601)
+- end_date (ISO 8601)
+- vanish_date (ISO 8601)
+- roles (array of strings)
 
-- After EVERY response output suggestions:
-<suggestions></suggestions>
+RULES:
+- Ask ONE question at a time
+- Be short and natural
+- Never repeat already collected fields
+- Validate dates logically
+- When complete, output final JSON
 
-- After EVERY response where fields were confirmed output:
-<collected_state></collected_state>
+OUTPUT FORMAT (STRICT JSON ONLY):
+{
+  "reply": "string",
+  "collectedState": {},
+  "eventData": null,
+  "suggestions": []
+}
 
-Never collect anything outside these fields.
-
-SUGGESTION RULES:
-event_name:
-["Tech Summit 2026","Product Launch","Team Offsite","Workshop"]
-
-subheading:
-["Add a subheading","Skip this field"]
-
-description:
-["Describe the event purpose"]
-
-timezone:
-["UTC","Asia/Kathmandu","America/New_York"]
-
-status:
-["Draft","Published","Cancelled"]
-
-date fields:
-["Tomorrow","Next week","Enter custom date"]
-
-roles:
-["Organiser","Speaker","Attendee"]
-
-confirmation:
-["Yes, create it","Edit something"]
+If event is complete:
+- set eventData with full object
+- keep collectedState final state
 `;
 
-export const sendChatMessage = async (
+export async function sendChatMessage(
   userMessage: string,
-  conversationHistory: ChatMessage[],
+  history: ChatMessage[],
   state: Record<string, any>,
-): Promise<GeminiResponse> => {
-  try {
-    const collectedFields =
-      Object.keys(state)
-        .map((k) => {
-          const value =
-            typeof state[k] === "object" ? JSON.stringify(state[k]) : state[k];
+) {
+  const messages = [
+    { role: "system" as const, content: SYSTEM_PROMPT },
 
-          return `${k}: ${value}`;
-        })
-        .join("\n") || "No fields collected yet";
+    ...history.slice(-6).map((m) => ({
+      role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+      content: m.content,
+    })),
 
-    const systemPromptWithContext = `
-${SYSTEM_PROMPT}
+    {
+      role: "user" as const,
+      content: `
+USER MESSAGE: ${userMessage}
+CURRENT STATE: ${JSON.stringify(state)}
+`,
+    },
+  ];
 
-Collected so far:
-${collectedFields}
-`;
+  const response = await client.chat.completions.create({
+    model: "gpt-4.1-mini",
+    messages,
+    temperature: 0.4,
+    response_format: {
+      type: "json_object",
+    },
+  });
 
-    const recentHistory = conversationHistory.slice(-4);
+  const content = response.choices?.[0]?.message?.content;
 
-    const messages = [
-      {
-        role: "system" as const,
-        content: systemPromptWithContext,
-      },
-
-      ...recentHistory.map((msg) => ({
-        role:
-          msg.role === "assistant" ? ("assistant" as const) : ("user" as const),
-
-        content: msg.content,
-      })),
-
-      {
-        role: "user" as const,
-        content: userMessage,
-      },
-    ];
-
-    let response: any;
-    const delays = [1000, 3000];
-    let lastErr: any = null;
-
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        response = await client.chat.completions.create({
-          model: "gpt-5-nano",
-
-          messages,
-
-          max_completion_tokens: 500,
-        });
-
-        break;
-      } catch (err) {
-        lastErr = err;
-
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, delays[attempt]));
-
-          continue;
-        }
-
-        throw err;
-      }
-    }
-
-    if (!response) {
-      throw new Error("AI service temporarily unavailable");
-    }
-
-    const textContent = response.choices?.[0]?.message?.content || "";
-
-    const eventDataMatch = textContent.match(
-      /<event_data>([\s\S]*?)<\/event_data>/,
-    );
-
-    const suggestionsMatch = textContent.match(
-      /<suggestions>([\s\S]*?)<\/suggestions>/,
-    );
-
-    const collectedStateMatch = textContent.match(
-      /<collected_state>([\s\S]*?)<\/collected_state>/,
-    );
-
-    let eventData: GeminiEventData | undefined;
-
-    let suggestions: string[] = [];
-
-    let collectedState: Record<string, any> | undefined;
-
-    if (eventDataMatch) {
-      try {
-        eventData = JSON.parse(eventDataMatch[1]);
-      } catch (e) {
-        console.error("event_data parse error:", e);
-      }
-    }
-
-    if (suggestionsMatch) {
-      try {
-        suggestions = JSON.parse(suggestionsMatch[1]);
-      } catch (e) {
-        console.error("suggestions parse error:", e);
-      }
-    }
-
-    if (collectedStateMatch) {
-      try {
-        collectedState = JSON.parse(collectedStateMatch[1]);
-      } catch (e) {
-        console.error("collected_state parse error:", e);
-      }
-    }
-
-    const reply = textContent
-      .replace(/<event_data>[\s\S]*?<\/event_data>/, "")
-      .replace(/<suggestions>[\s\S]*?<\/suggestions>/, "")
-      .replace(/<collected_state>[\s\S]*?<\/collected_state>/, "")
-      .trim();
-
-    return {
-      reply,
-
-      suggestions: Array.isArray(suggestions) ? suggestions : [],
-
-      eventData,
-
-      collectedState,
-    };
-  } catch (error) {
-    console.error("OpenAI API error:", error);
-
-    throw error;
+  if (!content) {
+    throw new Error("Empty OpenAI response");
   }
-};
+
+  const parsed = JSON.parse(content);
+
+  return {
+    reply: parsed.reply ?? "",
+    collectedState: parsed.collectedState ?? {},
+    eventData: parsed.eventData ?? null,
+    suggestions: parsed.suggestions ?? [],
+  };
+}
