@@ -1,5 +1,4 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-
 import dotenv from "dotenv";
 import { ChatMessage, GeminiEventData, GeminiResponse } from "../types";
 
@@ -55,18 +54,24 @@ export const sendChatMessage = async (
   try {
     const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+    // FIX 2: Generate system parameters cleanly without raw JSON text dumps
     const collectedFields =
       Object.keys(state)
-        .map((k) => `${k}: ${state[k]}`)
+        .map(
+          (k) =>
+            `${k}: ${typeof state[k] === "object" ? JSON.stringify(state[k]) : state[k]}`,
+        )
         .join("\n") || "No fields collected yet";
 
     const systemPromptWithContext = `${SYSTEM_PROMPT}
 
-Current state: ${JSON.stringify(state)}
 Collected so far:
 ${collectedFields}`;
 
-    const conversationContent = conversationHistory.map((msg) => ({
+    // FIX 1: Max 4 messages history context boundary to stop the Token Snowball
+    const recentHistory = conversationHistory.slice(-4);
+
+    const conversationContent = recentHistory.map((msg) => ({
       role: msg.role === "assistant" ? "model" : msg.role,
       parts: [{ text: msg.content }],
     }));
@@ -76,7 +81,8 @@ ${collectedFields}`;
       parts: [{ text: userMessage }],
     });
 
-    const delays = [2000, 4000, 8000];
+    // FIX 3: Back-off recovery window spaced to clear 60-second RPM buckets
+    const delays = [6000, 12000];
     let response: any;
     let lastErr: any = null;
 
@@ -91,20 +97,19 @@ ${collectedFields}`;
         lastErr = err;
         const status = (err as any)?.status || (err as any)?.code;
         const isQuota = status === 429 || /quota|429/i.test(String(err));
+
         if (isQuota && attempt < 2) {
           const delay = delays[attempt];
           await new Promise((r) => setTimeout(r, delay));
           continue;
         }
-        // Non-retryable error or no attempts left
         throw err;
       }
     }
 
     if (!response) {
-      // All retries exhausted for quota errors
       throw new Error(
-        "AI service is temporarily busy. Please wait a moment and try again.",
+        "AI service is temporarily busy. Please try again in a minute.",
       );
     }
 
@@ -116,7 +121,6 @@ ${collectedFields}`;
     const suggestionsMatch = textContent.match(
       /<suggestions>([\s\S]*?)<\/suggestions>/,
     );
-
     const collectedStateMatch = textContent.match(
       /<collected_state>([\s\S]*?)<\/collected_state>/,
     );
@@ -164,9 +168,6 @@ ${collectedFields}`;
     };
   } catch (error) {
     console.error("Gemini API error:", error);
-    throw new Error(
-      "Failed to process chat message with Gemini API: " +
-        (error instanceof Error ? error.message : String(error)),
-    );
+    throw error;
   }
 };

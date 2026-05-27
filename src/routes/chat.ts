@@ -59,8 +59,7 @@ router.post(
 
       if (sessionId) {
         const result = await query(
-          `SELECT * FROM chat_sessions
-           WHERE id = $1 AND user_id = $2`,
+          `SELECT * FROM chat_sessions WHERE id = $1 AND user_id = $2`,
           [sessionId, req.userId],
         );
 
@@ -68,7 +67,6 @@ router.post(
           res.status(404).json({ error: "Chat session not found" });
           return;
         }
-
         session = rowToChatSession(result.rows[0]);
       } else {
         const result = await query(
@@ -109,7 +107,6 @@ router.post(
       const updatedState = {
         ...session.state,
         ...(geminiResponse.collectedState || {}),
-        ...(geminiResponse.eventData || {}),
       };
 
       let eventId: string | undefined;
@@ -117,10 +114,10 @@ router.post(
       if (geminiResponse.eventData) {
         const eventResult = await query(
           `INSERT INTO events (
-            user_id, event_name, subheading, description, banner_image_url,
-            timezone, status, start_date, end_date, vanish_date, roles
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          RETURNING id`,
+             user_id, event_name, subheading, description, banner_image_url,
+             timezone, status, start_date, end_date, vanish_date, roles
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id`,
           [
             req.userId,
             geminiResponse.eventData.event_name,
@@ -154,8 +151,7 @@ router.post(
       }
 
       await query(
-        `UPDATE chat_sessions SET messages = $1, state = $2, updated_at = NOW()
-         WHERE id = $3`,
+        `UPDATE chat_sessions SET messages = $1, state = $2, updated_at = NOW() WHERE id = $3`,
         [
           JSON.stringify(updatedMessages),
           JSON.stringify(updatedState),
@@ -176,11 +172,17 @@ router.post(
       });
     } catch (err) {
       console.error("[CHAT ERROR]:", err);
-      res
-        .status(500)
-        .json({
-          error: err instanceof Error ? err.message : "Internal server error",
-        });
+
+      const isQuotaError =
+        err instanceof Error &&
+        (err.message.includes("429") || /quota/i.test(err.message));
+      res.status(isQuotaError ? 429 : 500).json({
+        error: isQuotaError
+          ? "Rate limit exceeded. Please wait a few seconds before typing again."
+          : err instanceof Error
+            ? err.message
+            : "Internal server error",
+      });
     }
   },
 );
@@ -198,11 +200,9 @@ router.get("/sessions", async (req: AuthenticatedRequest, res: Response) => {
     res.json(sessions);
   } catch (err) {
     console.error("[CHAT ERROR]:", err);
-    res
-      .status(500)
-      .json({
-        error: err instanceof Error ? err.message : "Internal server error",
-      });
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Internal server error",
+    });
   }
 });
 
@@ -227,11 +227,9 @@ router.get(
       res.json(session);
     } catch (err) {
       console.error("[CHAT ERROR]:", err);
-      res
-        .status(500)
-        .json({
-          error: err instanceof Error ? err.message : "Internal server error",
-        });
+      res.status(500).json({
+        error: err instanceof Error ? err.message : "Internal server error",
+      });
     }
   },
 );
