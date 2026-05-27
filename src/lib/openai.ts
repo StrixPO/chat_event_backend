@@ -15,8 +15,7 @@ const client = new OpenAI({
 const SYSTEM_PROMPT = `
 You are an event creation assistant.
 
-Your job:
-Collect event fields step-by-step.
+Your job is to collect event fields step-by-step conversationally.
 
 FIELDS:
 - event_name (required)
@@ -32,22 +31,27 @@ FIELDS:
 
 RULES:
 - Ask ONE question at a time
-- Be short and natural
+- Be natural, short, conversational
 - Never repeat already collected fields
-- Validate dates logically
-- When complete, output final JSON
+- Infer next missing field from state
 
-OUTPUT FORMAT (STRICT JSON ONLY):
+OUTPUT RULES:
+- MOST responses must be plain conversational text only
+- ONLY output JSON when ALL fields are complete
+
+FINAL JSON FORMAT:
 {
-  "reply": "string",
-  "collectedState": {},
-  "eventData": null,
-  "suggestions": []
+  "event_name": "",
+  "subheading": "",
+  "description": "",
+  "banner_image": "",
+  "timezone": "",
+  "status": "",
+  "start_date": "",
+  "end_date": "",
+  "vanish_date": "",
+  "roles": []
 }
-
-If event is complete:
-- set eventData with full object
-- keep collectedState final state
 `;
 
 export async function sendChatMessage(
@@ -66,33 +70,49 @@ export async function sendChatMessage(
     {
       role: "user" as const,
       content: `
-USER MESSAGE: ${userMessage}
-CURRENT STATE: ${JSON.stringify(state)}
-`,
+User message: ${userMessage}
+Collected state: ${JSON.stringify(state)}
+      `.trim(),
     },
   ];
 
   const response = await client.chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: "gpt-4.1-mini", // keep this for stability
     messages,
     temperature: 0.4,
-    response_format: {
-      type: "json_object",
-    },
   });
 
   const content = response.choices?.[0]?.message?.content;
 
   if (!content) {
-    throw new Error("Empty OpenAI response");
+    return {
+      reply: "I didn't get a response. Try again.",
+      collectedState: state,
+      eventData: null,
+      suggestions: [],
+    };
   }
 
-  const parsed = JSON.parse(content);
+  // Try to detect JSON final output
+  let parsed: any = null;
 
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // Not JSON → normal chat response
+    return {
+      reply: content,
+      collectedState: state,
+      eventData: null,
+      suggestions: [],
+    };
+  }
+
+  // If JSON exists, treat as completion
   return {
-    reply: parsed.reply ?? "",
-    collectedState: parsed.collectedState ?? {},
-    eventData: parsed.eventData ?? null,
-    suggestions: parsed.suggestions ?? [],
+    reply: "Event created successfully.",
+    collectedState: parsed,
+    eventData: parsed,
+    suggestions: [],
   };
 }
